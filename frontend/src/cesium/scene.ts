@@ -255,7 +255,9 @@ export class TwinScene {
           Cesium.Cartesian3.fromDegreesArrayHeights(flatten(ring, this.groundHeight - 0.6)),
         ),
         height: this.groundHeight - 0.6,
-        material: Cesium.Color.fromCssColorString('#0C1926').withAlpha(0.97),
+        // 场地底色不能太黑: 太黑会把建筑投影和路网全部吞掉, 整片园区糊成一块。
+        // 提亮一档后, 投影(深色半透明)与楼体才有层次。
+        material: Cesium.Color.fromCssColorString('#16283A').withAlpha(0.96),
       },
     })
     this.viewer.entities.add({
@@ -408,6 +410,7 @@ export class TwinScene {
       })
 
       group.entities.push(entity)
+      group.entities.push(...this.addContactShadow(id, ring, height, lat))
       group.entities.push(
         this.viewer.entities.add({
           id: `building-outline:${id}`,
@@ -430,6 +433,10 @@ export class TwinScene {
         height,
         color,
       })
+      // 必须等 meta 写好再上色: paintBuilding 里 `if (!entity?.polygon || !meta) return`,
+      // 提前调用会静默跳过, 体块就带着 BASE_ALPHA(0.62) 留在场上,
+      // 模型模式下把外壳糊成一层半透明壳（看起来像玻璃楼/两层叠着）
+      this.paintBuilding(id)
     }
 
     // 切 LOD 会重建实体, 这里把选中态与剖切高度补回来,
@@ -663,6 +670,9 @@ export class TwinScene {
    */
   private syncShell(): void {
     if (this.tileset) this.tileset.show = this.shellMode === 'model' && this.ghostBuilding === null
+    // 模式切换后必须重刷体块材质: 否则体块仍停留在创建时的 BASE_ALPHA(0.62),
+    // 模型模式下会在外壳外面再糊一层半透明壳 —— 看起来"模型不透亮/像两层楼叠着"
+    for (const id of this.buildingEntities.keys()) this.paintBuilding(id)
   }
 
   /**
@@ -742,6 +752,50 @@ export class TwinScene {
   /** 体块基准高度: 略高于外壳, 保证隐形代理在拾取时稳定优先 */
   private baseZ(): number {
     return this.groundHeight + 0.3 + PICK_LIFT
+  }
+
+  /**
+   * 接地阴影（假阴影）。
+   *
+   * 场景没有开启 Cesium 的阴影贴图（会带来一遍额外深度渲染，且与 unlit 外壳不匹配），
+   * 但完全没有投影时建筑会「浮」在地面上。这里按太阳方向把footprint 平移三份、
+   * 逐份降低透明度，叠出近实远虚的软阴影 —— 纯几何，零光照依赖。
+   */
+  private addContactShadow(
+    id: string,
+    ring: number[][],
+    height: number,
+    lat: number,
+  ): Cesium.Entity[] {
+    const shadowLength = Math.min(height * 1.15, 90)
+    const dirX = 0.586 // 与 gen_demo_tileset.py 里的 SUN 方向保持一致
+    const dirY = 0.807
+    const cosLat = Math.cos(Cesium.Math.toRadians(lat)) || 1
+    const layers: Array<[number, number, number]> = [
+      [0.35, 0.2, 0.06],
+      [0.68, 0.15, 0.05],
+      [0.95, 0.1, 0.04],
+    ]
+
+    return layers.map(([ratio, alpha, z]) => {
+      const dLon = (dirX * shadowLength * ratio) / (111_320 * cosLat)
+      const dLat = (dirY * shadowLength * ratio) / 111_320
+      return this.viewer.entities.add({
+        id: `building-shadow:${id}:${ratio}`,
+        show: true,
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(
+            Cesium.Cartesian3.fromDegreesArray(
+              ring.flatMap(([lon, itemLat]) => [lon + dLon, itemLat + dLat]),
+            ),
+          ),
+          height: this.groundHeight + z,
+          material: Cesium.Color.fromCssColorString('#02060C').withAlpha(alpha),
+          closeTop: true,
+          closeBottom: false,
+        },
+      })
+    })
   }
 
   private paintBuilding(id: string): void {
@@ -1045,13 +1099,40 @@ export class TwinScene {
    * 相机以「目标点 + 距离 + 俯角」定义, 而不是直接给高度。
    * 只给高度会让相机悬在园区正上方朝前看, 园区反而落在视野外。
    */
+  /**
+   * 调试/演示深链：`?cam=lng,lat,range[,heading[,pitch]]`。
+   * 用于把镜头固定到某一栋楼做近景检查（例如核对立面纹理、女儿墙、退台）。
+   */
+  private parseCamOverride(): {
+    lng: number
+    lat: number
+    range: number
+    heading: number
+    pitch: number
+  } | null {
+    const raw = new URLSearchParams(window.location.search).get('cam')
+    if (!raw) return null
+    const parts = raw.split(',').map(Number)
+    if (parts.length < 3 || parts.slice(0, 3).some((value) => !Number.isFinite(value))) {
+      return null
+    }
+    return {
+      lng: parts[0],
+      lat: parts[1],
+      range: parts[2],
+      heading: Number.isFinite(parts[3]) ? parts[3] : this.homeHeading,
+      pitch: Number.isFinite(parts[4]) ? parts[4] : this.homePitch,
+    }
+  }
+
   private applyHome(instant: boolean): void {
-    const pitch = Cesium.Math.toRadians(this.homePitch)
-    const heading = Cesium.Math.toRadians(this.homeHeading)
-    const range = this.homeHeight
+    const override = this.parseCamOverride()
+    const pitch = Cesium.Math.toRadians(override?.pitch ?? this.homePitch)
+    const heading = Cesium.Math.toRadians(override?.heading ?? this.homeHeading)
+    const range = override?.range ?? this.homeHeight
     const target = Cesium.Cartesian3.fromDegrees(
-      this.homeCenter[0],
-      this.homeCenter[1],
+      override?.lng ?? this.homeCenter[0],
+      override?.lat ?? this.homeCenter[1],
       this.groundHeight,
     )
     const enu = Cesium.Transforms.eastNorthUpToFixedFrame(target)

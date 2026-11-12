@@ -5,7 +5,7 @@
     "extras": {
       "gltfUpAxis": "Y",
       "source": "vector-extrude-standin",
-      "note": "演示用外壳: 由矢量体块挤出, 用于验证 3D Tiles 链路; 真实项目替换为倾斜摄影切片"
+      "note": "演示用外壳: 矢量体块挤出 + 楼层带 + 屋顶构造; 真实项目替换为倾斜摄影切片"
     }
   },
   "geometricError": 128.0,

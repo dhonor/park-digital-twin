@@ -12,6 +12,12 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // 三维瓦片必须一起代理: 否则 /tiles/tileset.json 会被 Vite 的 SPA 兜底成 index.html,
+      // 前端拿到一坨 HTML 去 JSON.parse, 外壳静默回退成矢量体块（开发模式下极难发现）
+      '/tiles': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
     },
   },
   build: {

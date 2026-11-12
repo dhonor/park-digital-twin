@@ -5,15 +5,20 @@ P1 要打通的是外壳链路本身: 瓦片加载、加载进度、按楼栋拾
 真实项目把倾斜摄影/激光扫描切片产物放进 data/tileset/ 即可替换,
 前端与接口都不用改 —— 这就是这一层抽象的价值。
 
-本脚本用现有建筑矢量体块挤出成棱柱, 产出:
-    tileset.json          根瓦片(整园合并) + 每栋楼一个子瓦片
-    shell.glb             整园合并外壳(远景时只加载它)
-    b01.glb ... b12.glb   单栋外壳(近景细化)
+体块替身要做到「不像纸箱」, 靠三件事:
+    1. 楼层带: 每个立面按真实层数切成横向条带, 明暗交替 —— 全景视距下就靠它读出层数;
+    2. 体量分段: 高层做裙楼 + 塔楼退台, 屋顶加女儿墙与设备箱, 首层加雨棚;
+    3. 明暗: 按面法线与太阳方向烘焙受光面, 再叠自下而上的垂直渐变。
+
+> 为什么不贴窗格纹理: 试过把程序化 PNG 作为 baseColorTexture 写进 glb,
+> 顶点色/几何都换了但贴图始终不生效（Cesium 侧 unlit 与 PBR 两条路径都验证过）;
+> 而在 900m 的全景视距下, 一块 7.5m 见方的窗格只有 2~3 像素, 本来也读不出来。
+> 改用「几何楼层带」: 不依赖纹理管线, 且在任何视距下都有稳定的横向节奏。
 
 坐标约定:
     以园区中心为原点的 ENU 局部米制坐标 (X 东 / Y 北 / Z 上);
     根瓦片 transform 把 ENU 转到 ECEF;
-    glTF 直接按 Z-up 输出, 并在 asset.extras.gltfUpAxis 声明, 避免换轴出错.
+    顶点按 glTF 规范换成 Y-up 输出.
 
 用法: python tools/gen_demo_tileset.py
 """
@@ -36,6 +41,9 @@ M_PER_DEG_LAT = 111_320.0
 
 # 固定太阳方向(西北高角), 用于把明暗烘进顶点色 —— 材质是 unlit, 靠顶点色读立体感
 SUN = (-0.45, -0.62, 0.64)
+
+#: 楼层带的明暗对比: 太大像斑马线, 太小读不出层
+BAND_CONTRAST = 0.13
 
 TYPE_FALLBACK = {
     "office": "#2E7DF7",
@@ -97,45 +105,11 @@ def hex_to_rgb(value: str) -> tuple[float, float, float]:
     )
 
 
+def mix(rgb: tuple[float, float, float], target: tuple[float, float, float], amount: float):
+    return tuple(rgb[i] + (target[i] - rgb[i]) * amount for i in range(3))
+
+
 # ---------------------------------------------------------------- 几何
-class Mesh:
-    def __init__(self) -> None:
-        self.positions: list[tuple[float, float, float]] = []
-        self.normals: list[tuple[float, float, float]] = []
-        self.colors: list[tuple[float, float, float, float]] = []
-        self.indices: list[int] = []
-
-    def add_prism(self, ring: list[tuple[float, float]], base: float, top: float, rgb) -> None:
-        count = len(ring)
-        for i in range(count):
-            px, py = ring[i]
-            qx, qy = ring[(i + 1) % count]
-            ex, ey = qx - px, qy - py
-            length = math.hypot(ex, ey) or 1.0
-            nx, ny = ey / length, -ex / length  # 逆时针环的外法线
-            litness = max(0.0, nx * SUN[0] + ny * SUN[1])
-            shade = 0.58 + 0.42 * litness
-            color = linear_color((rgb[0] * shade, rgb[1] * shade, rgb[2] * shade))
-
-            start = len(self.positions)
-            quad = ((px, py, base), (qx, qy, base), (qx, qy, top), (px, py, top))
-            for x, y, z in quad:
-                self.positions.append((x, y, z))
-                self.normals.append((nx, ny, 0.0))
-                self.colors.append(color)
-            self.indices.extend([start, start + 1, start + 2, start, start + 2, start + 3])
-
-        # 顶面
-        top_color = linear_color(rgb)
-        base_index = len(self.positions)
-        for x, y in ring:
-            self.positions.append((x, y, top))
-            self.normals.append((0.0, 0.0, 1.0))
-            self.colors.append(top_color)
-        for i in range(1, count - 1):
-            self.indices.extend([base_index, base_index + i, base_index + i + 1])
-
-
 def pad4(blob: bytes, filler: bytes) -> bytes:
     remainder = (-len(blob)) % 4
     return blob + filler * remainder
@@ -149,6 +123,179 @@ def to_gltf(p: tuple[float, float, float]) -> tuple[float, float, float]:
     """
     x, y, z = p
     return (x, z, -y)
+
+
+def inset_ring(ring: list[tuple[float, float]], factor: float) -> list[tuple[float, float]]:
+    cx = sum(p[0] for p in ring) / len(ring)
+    cy = sum(p[1] for p in ring) / len(ring)
+    return [(cx + (x - cx) * factor, cy + (y - cy) * factor) for x, y in ring]
+
+
+def ring_area(ring: list[tuple[float, float]]) -> float:
+    total = 0.0
+    for i, (x1, y1) in enumerate(ring):
+        x2, y2 = ring[(i + 1) % len(ring)]
+        total += x1 * y2 - x2 * y1
+    return abs(total) / 2
+
+
+class Mesh:
+    def __init__(self) -> None:
+        self.positions: list[tuple[float, float, float]] = []
+        self.normals: list[tuple[float, float, float]] = []
+        self.colors: list[tuple[float, float, float, float]] = []
+        self.indices: list[int] = []
+
+    def add_prism(
+        self,
+        ring: list[tuple[float, float]],
+        base: float,
+        top: float,
+        rgb: tuple[float, float, float],
+        floors: int = 1,
+        shade_bottom: float = 0.78,
+        shade_top: float = 1.04,
+    ) -> None:
+        """挤出一段楼体，立面按 `floors` 层切成明暗交替的横向条带."""
+        if top <= base:
+            return
+
+        count = len(ring)
+        floors = max(1, min(floors, 40))
+        height = top - base
+
+        for i in range(count):
+            px, py = ring[i]
+            qx, qy = ring[(i + 1) % count]
+            ex, ey = qx - px, qy - py
+            length = math.hypot(ex, ey) or 1.0
+            if length < 0.05:
+                continue
+
+            nx, ny = ey / length, -ex / length  # 逆时针环的外法线
+            litness = max(0.0, nx * SUN[0] + ny * SUN[1])
+            face_shade = 0.66 + 0.34 * litness
+
+            for floor in range(floors):
+                z0 = base + height * floor / floors
+                z1 = base + height * (floor + 1) / floors
+                # 交替明暗 = 玻璃带 / 实墙带
+                band = 1.0 if floor % 2 == 0 else 1.0 - BAND_CONTRAST
+                mid = (floor + 0.5) / floors
+                gradient = shade_bottom + (shade_top - shade_bottom) * mid
+
+                start = len(self.positions)
+                quad = ((px, py, z0), (qx, qy, z0), (qx, qy, z1), (px, py, z1))
+                for x, y, z in quad:
+                    self.positions.append((x, y, z))
+                    self.normals.append((nx, ny, 0.0))
+                    k = face_shade * gradient * band
+                    tinted = mix(rgb, (0.62, 0.68, 0.76), 0.12)  # 轻微去饱和
+                    self.colors.append(
+                        linear_color((tinted[0] * k, tinted[1] * k, tinted[2] * k))
+                    )
+                self.indices.extend([start, start + 1, start + 2, start, start + 2, start + 3])
+
+        # 顶面略亮即可: 加太多白会变成"白顶盒子", 把立面的楼层带压掉
+        top_color = linear_color(mix(rgb, (1.0, 1.0, 1.0), 0.12))
+        base_index = len(self.positions)
+        for x, y in ring:
+            self.positions.append((x, y, top))
+            self.normals.append((0.0, 0.0, 1.0))
+            self.colors.append(top_color)
+        for i in range(1, count - 1):
+            self.indices.extend([base_index, base_index + i, base_index + i + 1])
+
+    def add_box(
+        self,
+        cx: float,
+        cy: float,
+        sx: float,
+        sy: float,
+        base: float,
+        top: float,
+        rgb: tuple[float, float, float],
+    ) -> None:
+        ring = square_ring((cx - sx / 2, cy - sy / 2, cx + sx / 2, cy + sy / 2))
+        self.add_prism(ring, base, top, rgb, floors=1, shade_bottom=0.9, shade_top=1.0)
+
+    def add_building(
+        self, ring: list[tuple[float, float]], height: float, rgb, floors: int
+    ) -> None:
+        """体量分段：低层直接挤出；高层做裙楼 + 塔楼 + 女儿墙 + 屋顶设备。"""
+        if height >= 34 and ring_area(ring) > 260:
+            podium_floors = max(2, min(floors // 3, 4))
+            podium_h = height * podium_floors / max(floors, 1)
+            tower = inset_ring(ring, 0.84)
+            self.add_prism(
+                ring, 0.2, podium_h, rgb,
+                floors=podium_floors, shade_bottom=0.72, shade_top=0.92,
+            )
+            self.add_prism(
+                tower, podium_h, height, rgb,
+                floors=floors - podium_floors, shade_bottom=0.95, shade_top=1.06,
+            )
+            self._add_roof(tower, height, rgb, equipment=True)
+        else:
+            self.add_prism(
+                ring, 0.2, height, rgb,
+                floors=floors, shade_bottom=0.76, shade_top=1.02,
+            )
+            self._add_roof(ring, height, rgb, equipment=height >= 24)
+
+        self._add_canopy(ring, rgb)
+
+    def _add_roof(
+        self, ring: list[tuple[float, float]], height: float, rgb, equipment: bool
+    ) -> None:
+        # 女儿墙：屋顶一圈略深的窄条，把体量"封口"
+        parapet = inset_ring(ring, 0.985)
+        edge = mix(rgb, (0.08, 0.1, 0.14), 0.45)
+        self.add_prism(parapet, height - 0.05, height + 0.9, edge, 0.85, 0.95)
+
+        if not equipment:
+            return
+        cx = sum(p[0] for p in ring) / len(ring)
+        cy = sum(p[1] for p in ring) / len(ring)
+        span = max(max(p[0] for p in ring) - min(p[0] for p in ring), 1.0)
+        size = min(span * 0.22, 7.0)
+        unit = mix(rgb, (0.72, 0.76, 0.82), 0.55)
+        self.add_box(cx - span * 0.16, cy, size, size * 0.7, height + 0.9, height + 3.4, unit)
+        self.add_box(
+            cx + span * 0.14, cy + size * 0.2,
+            size * 0.7, size * 0.5, height + 0.9, height + 2.4, unit,
+        )
+
+    def _add_canopy(self, ring: list[tuple[float, float]], rgb) -> None:
+        if len(ring) < 3:
+            return
+        best = None
+        for i in range(len(ring)):
+            px, py = ring[i]
+            qx, qy = ring[(i + 1) % len(ring)]
+            length = math.hypot(qx - px, qy - py)
+            if best is None or length > best[0]:
+                best = (length, px, py, qx, qy)
+        if best is None:
+            return
+
+        length, px, py, qx, qy = best
+        if length < 8:
+            return
+        ex, ey = (qx - px) / length, (qy - py) / length
+        nx, ny = ey, -ex
+        depth = 3.2
+        t0, t1 = 0.28, 0.72
+        a = (px + ex * length * t0, py + ey * length * t0)
+        b = (px + ex * length * t1, py + ey * length * t1)
+        slab = [
+            a,
+            b,
+            (b[0] + nx * depth, b[1] + ny * depth),
+            (a[0] + nx * depth, a[1] + ny * depth),
+        ]
+        canopy = mix(rgb, (0.9, 0.94, 1.0), 0.35)
+        self.add_prism(slab, 3.6, 4.1, canopy, 0.9, 0.98)
 
 
 def write_glb(path: Path, mesh: Mesh) -> int:
@@ -258,15 +405,32 @@ def main() -> None:
         props = feature["properties"]
         bid = str(props["id"])
         ring_lon = [(float(p[0]), float(p[1])) for p in feature["geometry"]["coordinates"][0][:-1]]
-        ring = [((lon - center_lon) * lon_scale, (lat - center_lat) * M_PER_DEG_LAT) for lon, lat in ring_lon]
+        ring = [
+            ((lon - center_lon) * lon_scale, (lat - center_lat) * M_PER_DEG_LAT)
+            for lon, lat in ring_lon
+        ]
         height = float(props.get("height", 20.0))
-        rgb = hex_to_rgb(str(props.get("color") or TYPE_FALLBACK.get(str(props.get("type")), "#2E7DF7")))
+        floors = int(props.get("floors") or max(1, round(height / 3.8)))
+        rgb = hex_to_rgb(
+            str(props.get("color") or TYPE_FALLBACK.get(str(props.get("type")), "#2E7DF7"))
+        )
 
         mesh = Mesh()
-        mesh.add_prism(ring, 0.2, height, rgb)
+        mesh.add_building(ring, height, rgb, floors)
         size = write_glb(OUT / f"{bid.lower()}.glb", mesh)
         total_bytes += size
-        shell.add_prism(ring, 0.2, height, rgb)
+
+        # 远景合并壳：只保留体量 + 楼层带，不做屋顶设备，控制首包体积
+        if height >= 34:
+            podium_floors = max(2, min(floors // 3, 4))
+            podium_h = height * podium_floors / max(floors, 1)
+            shell.add_prism(ring, 0.2, podium_h, rgb, podium_floors, 0.72, 0.92)
+            shell.add_prism(
+                inset_ring(ring, 0.84), podium_h, height, rgb,
+                floors - podium_floors, 0.95, 1.06,
+            )
+        else:
+            shell.add_prism(ring, 0.2, height, rgb, floors, 0.76, 1.02)
 
         xs = [p[0] for p in ring]
         ys = [p[1] for p in ring]
@@ -297,7 +461,7 @@ def main() -> None:
             "extras": {
                 "gltfUpAxis": "Y",
                 "source": "vector-extrude-standin",
-                "note": "演示用外壳: 由矢量体块挤出, 用于验证 3D Tiles 链路; 真实项目替换为倾斜摄影切片",
+                "note": "演示用外壳: 矢量体块挤出 + 楼层带 + 屋顶构造; 真实项目替换为倾斜摄影切片",
             },
         },
         "geometricError": 128.0,
