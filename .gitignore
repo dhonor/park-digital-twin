@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/public/cesium/
+
+# 本地配置
+backend/.env
+.env.local
+
+# 调试产物
+*.log
+shot*.png
+crop*.png
+webgl.png
+.tmp-*
+.chrome-*/
+.playwright-cli/
+# 浏览器自动化快照 / Lighthouse 报告
+step*.yml
+*.aria.yml
+lh*.json
+lighthouse-report*

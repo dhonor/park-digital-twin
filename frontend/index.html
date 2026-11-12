@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#04070c" />
+    <meta name="description" content="园区级数字孪生底座: 三维场景、轻量化数据服务与实时遥测" />
+    <title>云创智谷 · 园区级数字孪生</title>
+    <script>
+      window.CESIUM_BASE_URL = '/cesium/'
+    </script>
+    <!--
+      首屏骨架直接写死在 HTML 里:
+      Cesium 运行时接近 5MB, 等 JS 下载并编译完再画第一帧, 白屏会持续数秒.
+      这段静态内容不依赖任何 JS, 文档一到就能上屏, 也给了用户"正在装载什么"的预期.
+    -->
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+        background: #04070c;
+      }
+      .boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 10px;
+        color: #6f8ba3;
+        font:
+          500 13px/1.6 'PingFang SC',
+          'Microsoft YaHei',
+          system-ui,
+          sans-serif;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(53, 195, 255, 0.08), transparent 55%), #04070c;
+      }
+      .boot-brand {
+        font-size: 18px;
+        letter-spacing: 0.32em;
+        color: #e9f4fd;
+      }
+      .boot-sub {
+        font-size: 10px;
+        letter-spacing: 0.22em;
+        color: #55708a;
+      }
+      .boot-bar {
+        position: relative;
+        width: 168px;
+        height: 2px;
+        margin-top: 8px;
+        overflow: hidden;
+        border-radius: 2px;
+        background: rgba(96, 156, 205, 0.18);
+      }
+      .boot-bar i {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 40%;
+        border-radius: 2px;
+        background: linear-gradient(90deg, rgba(53, 195, 255, 0), #35c3ff);
+        animation: boot-slide 1.15s ease-in-out infinite;
+      }
+      .boot-hint {
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        color: #6f8ba3;
+      }
+      @keyframes boot-slide {
+        0% {
+          transform: translateX(-110%);
+        }
+        100% {
+          transform: translateX(260%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-bar i {
+          animation: none;
+          width: 100%;
+          opacity: 0.5;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="boot" role="status" aria-live="polite">
+        <div class="boot-brand">云创智谷</div>
+        <div class="boot-sub">园区级数字孪生底座</div>
+        <div class="boot-bar"><i></i></div>
+        <div class="boot-hint">正在装载三维场景</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

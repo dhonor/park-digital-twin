@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    name: 后端 (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+      - name: 生成演示数据
+        run: python ../tools/gen_demo_data.py
+      - name: 单元测试
+        # 未配置 DATABASE_URL 时 PostGIS 集成测试自动跳过
+        run: python -m pytest -q
+
+  frontend:
+    name: 前端 (lint + 构建)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 安装依赖
+        run: npm ci
+      - name: 静态检查
+        run: npm run lint
+      - name: 格式检查
+        run: npm run format:check
+      - name: 类型检查 + 构建
+        run: npm run build

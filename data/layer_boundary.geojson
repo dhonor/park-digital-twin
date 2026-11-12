@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","name":"boundary","features":[{"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[120.0755624,30.2791539,8.0],[120.0833432,30.2791539,8.0],[120.0833432,30.2846156,8.0],[120.0755624,30.2846156,8.0],[120.0755624,30.2791539,8.0]]]},"properties":{"id":"PARK","name":"云创智谷","area_m2":471200.0}}]}

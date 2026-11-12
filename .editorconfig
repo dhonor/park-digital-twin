@@ -1,0 +1,17 @@
+root = true
+
+# 与 frontend/.prettierrc.json 的 endOfLine=crlf 保持一致:
+# 仓库在 Windows 下维护, 混用行尾会让格式化检查在 CI 上随机失败。
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+
+[*.py]
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false

@@ -1,0 +1,11 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.32,<1.0
+# 测试
+pytest>=8.3
+httpx>=0.27
+# ---- 多副本（可选）: 配 REDIS_URL 才启用, 不配则纯进程内 ----
+redis>=5.0
+
+# ---- 按需演进: 切换到 PostGIS 时安装 backend/requirements-postgis.txt ----
+# asyncpg>=0.30
+# 如需 OGC WMS/WFS 对外供图, 见 docker-compose.yml 的 geoserver profile

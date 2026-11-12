@@ -1,0 +1,98 @@
+# 一键起全栈（api + postgis，可选 geoserver）
+#
+#   docker compose up -d --build        # 默认: PostGIS 仓库 + 自动导入演示数据
+#   docker compose up -d api            # 只起 api（无 DATABASE_URL 时自动退回内存仓库）
+#   docker compose --profile ogc up -d  # 追加 GeoServer
+#
+# 说明: 主链路不依赖 GeoServer —— 前端走 /api 的轻量化 GeoJSON；
+#       只有"第三方 GIS / 上级平台按 WMS/WFS 取图"时才起 ogc profile。
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: park-twin:latest
+    # 不写 container_name: 否则 --scale api=2 会报冲突
+    restart: unless-stopped
+    depends_on:
+      postgis:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # 想退回「零依赖内存仓库」: 注释掉下面两行即可（容器会自动跳过导入）
+      DATABASE_URL: postgresql://park:park@postgis:5432/park_twin
+      REDIS_URL: redis://redis:6379/0
+      TZ: Asia/Shanghai
+      # 设为 0 可跳过启动时的数据导入（例如已有数据、或只读挂载）
+      LOAD_ON_START: "1"
+    # 不对宿主机暴露端口: 副本数量可任意扩缩, 对外统一走 gateway。
+    # 需要直连某个副本时用 `docker compose exec api-1 curl localhost:8000/...`
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  gateway:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+    ports:
+      - "8000:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  redis:
+    image: redis:7-alpine
+    # 演示环境不落盘: 缓存与实时状态都可重建
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: park-postgis
+    environment:
+      POSTGRES_DB: park_twin
+      POSTGRES_USER: park
+      POSTGRES_PASSWORD: park
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U park -d park_twin"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  geoserver:
+    image: kartoza/geoserver:2.25.2
+    container_name: park-geoserver
+    profiles: ["ogc"]
+    depends_on:
+      postgis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      GEOSERVER_ADMIN_USER: admin
+      GEOSERVER_ADMIN_PASSWORD: geoserver
+      INITIAL_MEMORY: 512M
+      MAXIMUM_MEMORY: 1G
+    volumes:
+      - geoserver_data:/opt/geoserver/data_dir
+
+volumes:
+  pgdata:
+  geoserver_data:
