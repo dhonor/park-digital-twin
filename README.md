@@ -1,9 +1,17 @@
 # 云创智谷 · 园区级数字孪生底座
 
+[![CI](https://github.com/dhonor/park-digital-twin/actions/workflows/ci.yml/badge.svg)](https://github.com/dhonor/park-digital-twin/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](backend/requirements.txt)
+[![Node](https://img.shields.io/badge/node-20+-green.svg)](frontend/package.json)
+
 一个可直接运行的园区级（0.47 km²）数字孪生最小闭环：**CesiumJS 三维场景 + FastAPI/PostGIS 轻量数据服务 + WebSocket 实时遥测**。
 含 12 栋建筑、200 台物联设备、48 段综合管网的可复现演示数据。
 
 ![驾驶舱](docs/screenshot.png)
+
+> 三维驾驶舱：左栏检索与图层，中间场景与实时点位，右栏态势、告警处置与楼栋/设备详情，底部六项 KPI。
+> 页面为深色驾驶舱配色，画布 / 面板 / 卡内分组分四级明度台阶，模块靠顶部色条与语义色标区分。
 
 ---
 
@@ -153,6 +161,12 @@ npm run lint; npm run format:check; npm run build
 | 过渡 | 视图切换、图层重载、详情拉取均有加载态：地图级遮罩（顶栏保持可操作）+ 右侧面板局部遮罩 |
 | 适配 | 1366 笔记本 / 1920 与 4K 大屏 / 触屏一体机：分档字号与面板宽度、触屏加大点击区并隐藏 hover 浮标、所有滚动区统一细滚动条 |
 
+| 设备详情 | 手机轻量视图 |
+| --- | --- |
+| ![设备详情](docs/screenshot-device.png) | ![手机视图](docs/screenshot-mobile.png) |
+
+左：选中设备后叠加 Three.js 高模，指标、量程、反控（二次确认）集中在一栏。右：手机端不加载三维引擎，只保留 KPI、设备状态、告警处置与楼栋设备清单。
+
 深链：`/?building=B01` 落到指定楼栋，`/?mode=2d` 进平面视图，`/?lod=0` 指定视图精度，`/?shell=vector` 回到矢量体块，`/?floor=4` 直接剖切到第 4 层，可组合（例如 `/?building=B01&floor=4`）。
 
 ### 多端适配策略
@@ -162,6 +176,7 @@ npm run lint; npm run format:check; npm run build
 | 小屏 PC（≤1440 / 高度 ≤800） | KPI 单行压缩、隐藏次要文案、面板收窄、左右面板下边距让位 |
 | 大屏（≥1920 / ≥2560） | 面板加宽、KPI 与标签字号上调，避免远距离看不清 |
 | 触屏一体机（`any-pointer: coarse`） | 开关/按钮/滑杆放大到 ≥32px 触控区、隐藏 hover 浮标、列表 `touch-action: pan-y` |
+| 手机（≤760px / 省流量 / 低内存） | 不下载三维引擎（约 4.8 MB 脚本），改走轻量摘要视图：KPI、设备状态、告警处置、楼栋设备清单；页脚可手动加载三维 |
 | 任意设备 | 滚动条统一为 6px 细样式（含右侧分层面积/设备/告警列表），`overscroll-behavior: contain` 防止滚动穿透 |
 
 ---
@@ -223,3 +238,16 @@ park-digital-twin/
 - 遥测是模拟器（状态机 + 抖动），生产替换为 MQTT 接入；对外接口已按生产形态设计。
 - 楼栋目前是拉伸体块。要真实外立面时，走倾斜摄影 → 3D Tiles，引擎不用换。
 - 要素量级到 5 万以上、或需要按视锥流式加载时，再引入矢量瓦片 / 3D Tiles。
+
+## 性能与质量
+
+| 项 | 现状 |
+| --- | --- |
+| 首屏 | HTML 内联骨架，三维引擎按需加载；入口 185 KB（gzip 60 KB），Cesium 运行时不进首屏关键路径 |
+| 传输 | 后端 GZip 中间件（`/assets` 一年 immutable、`/tiles` 1 小时、`index.html` no-cache） |
+| 手机端 | Lighthouse 移动端（4G + 4× CPU 降速）Performance **86~91**，LCP 1.8 s，传输 72 KiB |
+| 质量 | 后端 pytest 25 passed（无库）/ 29 passed（PostGIS）；前端 ESLint + Prettier + `tsc --noEmit` 进 CI |
+
+## 许可
+
+[MIT](LICENSE)。演示数据为虚构园区，可自由替换为真实业务数据；三维外壳瓦片可整体换成倾斜摄影成果。
