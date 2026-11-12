@@ -1,0 +1,13 @@
+# 文本文件统一按 LF 存进仓库, Windows 检出时由 core.autocrlf 还原成 CRLF
+* text=auto
+
+# 容器内直接执行的脚本必须是 LF:
+# CRLF 会让 shebang 变成 "#!/bin/sh\r", 在 Linux 里报 bad interpreter
+*.sh text eol=lf
+
+# 给 Windows 用的 PowerShell 脚本保持 CRLF
+*.ps1 text eol=crlf
+
+*.png binary
+*.jpg binary
+*.glb binary
